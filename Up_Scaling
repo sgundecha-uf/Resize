@@ -1,0 +1,163 @@
+//Group no : 6
+//Contact email : sgundecha@ufl.edu
+
+//Data precision(input and output) : 8 - bt unsigned array with gray scale values
+//Data size range : from 2x2 matrix to 2^15x2^15
+
+//Description of code : Implementing Image processing Resize up_scaling kernel using Intel IPP library. Linear interpolation method of resizing is used.
+//Half of the image pixels are set to gray value '100' and the other half are set to gray value '200'.
+//The kernel is then executed for 1000 times. And the kernel execution time is averaged over the 1000 values.
+
+#include <math.h>
+#include <memory>
+
+#include "base.h"
+#include "base_image.h"
+#include "base_ipp.h"
+#include "base_renderer.h"
+
+#include "ippcore.h"
+#include "ipps.h"
+#include "ippi.h"
+#include "ippcv.h"
+#include <iostream>
+#include <stdio.h>
+#include <fstream>
+#include <stdlib.h>
+using namespace std;
+
+extern void* ipView_8u_C1R(const Ipp8u* pData, int step, IppiSize roi,const char* caption, int isModalView); //from ippview.cpp
+
+int main()
+{
+	//Timing variables
+	long double start_clock, stop_clock, t;
+	long double sum[15];
+	int count = 0;
+
+	//Get the clock frequency
+	int mhz;
+	ippGetCpuFreqMhz(&mhz);
+
+	for (int m = 2; m < 32779; m = m * 2)
+	{
+		//int m = 10;
+		int n = 2 * m;
+		Ipp8u pSrc[m * m];  //Source Image Size
+		Status status;
+		IppiSize roi_x = { m, m }; //Source Image ROI
+		IppiSize roi_y = { n, n }; //Destination Image ROI
+		ippiSet_8u_C1R(0, pSrc, m, roi_x); //Setting all the elements of Source Image to Zero
+
+		for (int i = 0; i < m * m; i++)
+		{
+			pSrc[i] = 100;              //Input Gray scale image 
+			if (i % m < (m/2))
+				pSrc[i] = 200;
+		}
+		//ipView_8u_C1R(pSrc, m, roi_x, "source", 1);
+
+		IppStatus ippsts;
+
+		Ipp8u pDst[n * n]; //Source Image Size
+		ippiSet_8u_C1R(0, pDst, n, roi_y); //Setting all the elements of Destination Image to Zero
+
+		IppiResizeSpec_32f* pSpec = 0;
+		int specSize = 0, initSize = 0, bufSize = 0;
+		Ipp8u* pBuffer = 0;
+		Ipp8u* pInitBuf = 0;
+		Ipp32u numChannels = 1;
+		IppiPoint dstOffset = { 0, 0 };
+		//IppStatus status = ippStsNoErr;
+		IppiBorderType border = ippBorderRepl;
+
+		IppiSize srcSize = { m, m };
+
+		IppiSize dstSize = { n, n };
+
+		/* Spec and init buffer sizes */
+		status = ippiResizeGetSize_8u(srcSize, dstSize, ippLinear, 0, &specSize, &initSize);
+		printf("specSize = %d, size = %d \n", specSize, sizeof(srcSize));
+		if (status != ippStsNoErr) return status;
+
+		/* Memory allocation */
+		pInitBuf = ippsMalloc_8u(initSize);
+		pSpec = (IppiResizeSpec_32f*)ippsMalloc_8u(specSize);
+
+		if (pInitBuf == NULL || pSpec == NULL)
+		{
+			ippsFree(pInitBuf);
+			ippsFree(pSpec);
+			return ippStsNoMemErr;
+		}
+
+		/* Filter initialization */
+		status = ippiResizeLinearInit_8u(srcSize, dstSize, pSpec);
+
+
+		if (status != ippStsNoErr)
+		{
+			ippsFree(pSpec);
+			return status;
+		}
+
+		/* work buffer size */
+		status = ippiResizeGetBufferSize_8u(pSpec, dstSize, numChannels, &bufSize);
+		if (status != ippStsNoErr)
+		{
+			ippsFree(pSpec);
+			return status;
+		}
+
+		pBuffer = ippsMalloc_8u(bufSize);
+		if (pBuffer == NULL)
+		{
+			ippsFree(pSpec);
+			return ippStsNoMemErr;
+		}
+
+		IppiPoint dstoffset = { 0, 0 };
+
+		
+
+		int srcStep, dstStep;
+		for (int m = 0; m < 1000; m++)
+		{
+			//start the timer
+			start_clock = ippGetCpuClocks();
+
+			/* Resize processing */
+			status = ippiResizeLinear_8u_C1R(pSrc, m, pDst, n, dstoffset, roi_y, border, 0, pSpec, pBuffer);
+
+			//stop the timer
+			stop_clock = ippGetCpuClocks();
+
+			//calculate the time required by the kernel to execute for one run.
+			t = stop_clock - start_clock;
+			sum[count] = sum[count] + t;		// Sum updated on each run
+		}
+
+		//Calculating the avrage tie required for 100 runs in useconds
+		sum[count] = ((sum[count] / mhz) / 1000);
+
+		ippsFree(pSpec);
+		ippsFree(pBuffer);
+		ippsFree(pInitBuf);
+		
+		count++;
+	}
+	
+
+	//ipView_8u_C1R(pDst, n, roi_y, "destination", 1);
+	//Write the average calculated time in a text file
+	ofstream file;
+	file.open("resize_up_result.txt");
+	for (int i = 0; i < 15; i++)
+	{
+		file << "Average time taken for 2^" << i << " = " << sum[i] << endl;
+	}
+	file.close();
+	return 0; 
+}
+
+
